@@ -1,0 +1,31 @@
+# ---- .NET ----
+bin/
+obj/
+*.user
+*.suo
+.vs/
+[Dd]ebug/
+[Rr]elease/
+publish/
+*.db
+*.pfx
+
+# ---- Angular ----
+node_modules/
+dist/
+out-tsc/
+.angular/
+*.tsbuildinfo
+
+# ---- runtime data ----
+.openpost-data/
+logs/
+certs/
+*.eml
+
+# ---- tooling ----
+.env
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

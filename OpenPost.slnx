@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/OpenPost.Api/OpenPost.Api.csproj" />
+  <Project Path="src/OpenPost.Api.Tests/OpenPost.Api.Tests.csproj" />
+</Solution>

@@ -1,0 +1,88 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: openpost-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-openpost}
+      POSTGRES_USER: ${POSTGRES_USER:-openpost}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openpost} -d ${POSTGRES_DB:-openpost}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: src/OpenPost.Api/Dockerfile
+    container_name: openpost-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: "Host=db;Port=5432;Database=${POSTGRES_DB:-openpost};Username=${POSTGRES_USER:-openpost};Password=${POSTGRES_PASSWORD:-change-me}"
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY in .env}
+      MailServer__HostName: ${MAIL_HOSTNAME:-mail.example.org}
+      MailServer__TlsCertificatePath: /certs/openpost.pfx
+      MailServer__TlsCertificatePassword: ${TLS_CERT_PASSWORD:-}
+      Spam__RspamdUrl: ${RSPAMD_URL:-}
+      Antivirus__Enabled: ${CLAMAV_ENABLED:-false}
+      Bootstrap__AdminEmail: ${BOOTSTRAP_ADMIN_EMAIL:-admin@example.org}
+      Bootstrap__AdminPassword: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      Bootstrap__Domain: ${BOOTSTRAP_DOMAIN:-example.org}
+      Cors__AllowedOrigins: ${ALLOWED_ORIGINS:-https://mail.example.org}
+    volumes:
+      - mail-data:/var/lib/openpost
+      - ./certs:/certs:ro
+    ports:
+      - "25:2525"      # inbound SMTP
+      - "587:5587"     # submission (STARTTLS + AUTH)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  web:
+    image: nginx:1.27-alpine
+    container_name: openpost-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./src/web/dist:/usr/share/nginx/html:ro
+      - ./certs:/certs:ro
+    ports:
+      - "80:80"
+      - "443:443"
+
+  # Optional: full spam/policy engine. Point Spam__RspamdUrl at http://rspamd:11333
+  rspamd:
+    image: rspamd/rspamd:latest
+    container_name: openpost-rspamd
+    restart: unless-stopped
+    profiles: ["spam"]
+    volumes:
+      - rspamd-data:/var/lib/rspamd
+
+  # Optional: antivirus. Set CLAMAV_ENABLED=true and Antivirus__Host=clamav
+  clamav:
+    image: clamav/clamav:stable
+    container_name: openpost-clamav
+    restart: unless-stopped
+    profiles: ["antivirus"]
+    volumes:
+      - clamav-data:/var/lib/clamav
+
+volumes:
+  db-data:
+  mail-data:
+  rspamd-data:
+  clamav-data:

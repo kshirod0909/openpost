@@ -1,0 +1,404 @@
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h1>Administration</h1>
+      <p>Domains, mailboxes, users and delivery for this OpenPost instance.</p>
+    </div>
+    <div class="row" style="gap: 8px">
+      <span class="badge badge-brand">{{ auth.user()?.roles?.[0] }}</span>
+      <button class="btn btn-sm" (click)="load(tab())">Refresh</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    @for (item of ['overview','domains','mailboxes','users','queue','audit']; track item) {
+      <button class="tab" [class.active]="tab() === item" (click)="load($any(item))">
+        {{ item === 'audit' ? 'Audit log' : (item[0].toUpperCase() + item.slice(1)) }}
+      </button>
+    }
+  </div>
+
+  @if (loading()) {
+    <div class="row" style="gap: 10px; padding: 24px 0"><span class="spinner"></span><span class="muted">Loading…</span></div>
+  }
+
+  <!-- ------------------------------------------------ overview -->
+  @if (tab() === 'overview' && stats(); as s) {
+    <div class="stack">
+      <div class="grid-4">
+        <div class="card card-body stat">
+          <span class="muted small">Domains</span>
+          <strong>{{ s.domains }}</strong>
+          <span class="subtle small">{{ s.mailboxes }} mailboxes</span>
+        </div>
+        <div class="card card-body stat">
+          <span class="muted small">Messages stored</span>
+          <strong>{{ s.messages }}</strong>
+          <span class="subtle small">{{ s.messagesLast24h }} in the last 24h</span>
+        </div>
+        <div class="card card-body stat">
+          <span class="muted small">Delivery queue</span>
+          <strong [class.text-warn]="s.queuePending > 0">{{ s.queuePending }}</strong>
+          <span class="subtle small">{{ s.queueFailed }} failed permanently</span>
+        </div>
+        <div class="card card-body stat">
+          <span class="muted small">Storage used</span>
+          <strong>{{ s.storageUsedBytes | fileSize }}</strong>
+          <span class="subtle small">{{ s.users }} user accounts</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Mail volume</div>
+            <div class="muted small">Last 7 days, received vs sent</div>
+          </div>
+          <div class="row" style="gap: 14px">
+            <span class="legend"><i class="dot received"></i> Received</span>
+            <span class="legend"><i class="dot sent"></i> Sent</span>
+            <span class="legend"><i class="dot spam"></i> Spam</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="chart">
+            @for (day of s.volume; track day.date) {
+              <div class="chart-col">
+                <div class="bars">
+                  <div class="bar received" [style.height.%]="barHeight(day.received)" [title]="day.received + ' received'"></div>
+                  <div class="bar sent" [style.height.%]="barHeight(day.sent)" [title]="day.sent + ' sent'"></div>
+                  <div class="bar spam" [style.height.%]="barHeight(day.spam)" [title]="day.spam + ' spam'"></div>
+                </div>
+                <span class="chart-label">{{ day.date.slice(5) }}</span>
+              </div>
+            }
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><div class="card-title">Deliverability checklist</div></div>
+          <div class="card-body stack" style="gap: 10px">
+            <div class="check"><span class="badge badge-ok">ok</span> DKIM signing enabled for every hosted domain</div>
+            <div class="check"><span class="badge badge-ok">ok</span> Outbound retry queue with exponential backoff</div>
+            <div class="check"><span class="badge badge-warn">todo</span> Publish SPF, DKIM and DMARC records shown per domain</div>
+            <div class="check"><span class="badge badge-warn">todo</span> Set a PTR (reverse DNS) record matching your MX hostname</div>
+            <div class="check"><span class="badge badge-info">opt</span> Enable Rspamd for full policy-engine spam scoring</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Recent activity</div></div>
+          <div class="card-body stack" style="gap: 10px">
+            @for (entry of audit().slice(0, 6); track entry.id) {
+              <div class="row-between small">
+                <span class="mono">{{ entry.action }}</span>
+                <span class="subtle">{{ entry.createdAt | timeAgo }}</span>
+              </div>
+            } @empty {
+              <div class="muted small">Open the Audit log tab to load activity.</div>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ------------------------------------------------ domains -->
+  @if (tab() === 'domains') {
+    <div class="stack">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Hosted domains</div></div>
+        <div style="overflow: auto">
+          <table class="table">
+            <thead>
+              <tr><th>Domain</th><th>Mailboxes</th><th>Aliases</th><th>DKIM</th><th>DMARC</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+              @for (domain of domains(); track domain.id) {
+                <tr>
+                  <td>
+                    <div style="font-weight: 600">{{ domain.name }}</div>
+                    <div class="subtle small">{{ domain.displayName }}</div>
+                  </td>
+                  <td>{{ domain.mailboxCount }}</td>
+                  <td>{{ domain.aliasCount }}</td>
+                  <td class="mono small">{{ domain.dkimSelector }}</td>
+                  <td><span class="badge" [class.badge-ok]="domain.dmarcPolicy === 'reject'" [class.badge-warn]="domain.dmarcPolicy === 'quarantine'">{{ domain.dmarcPolicy }}</span></td>
+                  <td><span class="badge" [class.badge-ok]="domain.isActive" [class.badge-danger]="!domain.isActive">{{ domain.isActive ? 'Active' : 'Disabled' }}</span></td>
+                  <td>
+                    <div class="row" style="gap: 6px; justify-content: flex-end">
+                      <button class="btn btn-sm" (click)="showDns(domain.id)">DNS</button>
+                      <button class="btn btn-sm" (click)="rotateDkim(domain.id)">Rotate key</button>
+                      <button class="btn btn-sm" (click)="toggleDomain(domain)">{{ domain.isActive ? 'Disable' : 'Enable' }}</button>
+                    </div>
+                  </td>
+                </tr>
+              } @empty {
+                <tr><td colspan="7"><div class="empty">No domains yet. Add your first domain below.</div></td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><div class="card-title">Add a domain</div></div>
+          <div class="card-body stack">
+            <div class="field">
+              <label for="domain">Domain name</label>
+              <input id="domain" class="input" [(ngModel)]="domainForm.name" placeholder="example.org" />
+            </div>
+            <div class="field">
+              <label for="domainDisplay">Display name (optional)</label>
+              <input id="domainDisplay" class="input" [(ngModel)]="domainForm.displayName" placeholder="Example Organisation" />
+            </div>
+            <button class="btn btn-primary" (click)="createDomain()" [disabled]="busy()">Create domain</button>
+            <p class="subtle small">A 2048-bit DKIM key pair is generated automatically. Publish the DNS records before sending mail.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">DNS records</div>
+            @if (dns()) { <span class="badge badge-brand">{{ dns()!.domain }}</span> }
+          </div>
+          <div class="card-body">
+            @if (dns(); as records) {
+              <div class="stack" style="gap: 10px">
+                @for (record of records.records; track record.host + record.type) {
+                  <div class="dns-row">
+                    <div class="row-between">
+                      <div class="row" style="gap: 8px">
+                        <span class="badge badge-info">{{ record.type }}</span>
+                        <span class="mono small">{{ record.host }}</span>
+                        @if (record.priority) { <span class="subtle small">prio {{ record.priority }}</span> }
+                      </div>
+                      <button class="btn btn-ghost btn-sm" (click)="copy(record.value)">Copy</button>
+                    </div>
+                    <div class="mono small" style="margin-top: 6px; word-break: break-all">{{ record.value }}</div>
+                    <div class="subtle small" style="margin-top: 4px">{{ record.purpose }}</div>
+                  </div>
+                }
+              </div>
+            } @else {
+              <div class="empty" style="padding: 24px">Select a domain to see the records to publish.</div>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ------------------------------------------------ mailboxes -->
+  @if (tab() === 'mailboxes') {
+    <div class="stack">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Mailboxes</div>
+          <select class="select" style="width: 220px" [(ngModel)]="selectedDomain" (ngModelChange)="load('mailboxes')">
+            <option value="">All my domains</option>
+            @for (domain of domains(); track domain.id) {
+              <option [value]="domain.id">{{ domain.name }}</option>
+            }
+          </select>
+        </div>
+        <div style="overflow: auto">
+          <table class="table">
+            <thead><tr><th>Address</th><th>Owner</th><th>Quota</th><th>Type</th><th>Created</th><th></th></tr></thead>
+            <tbody>
+              @for (mailbox of mailboxes(); track mailbox.id) {
+                <tr>
+                  <td>
+                    <div style="font-weight: 600">{{ mailbox.address }}</div>
+                    <div class="subtle small">{{ mailbox.displayName }}</div>
+                  </td>
+                  <td class="small">{{ mailbox.ownerEmail || '—' }}</td>
+                  <td class="small">{{ mailbox.usedBytes | fileSize }} / {{ mailbox.quotaBytes | fileSize }}</td>
+                  <td><span class="badge" [class.badge-info]="mailbox.isShared">{{ mailbox.isShared ? 'Shared' : 'Personal' }}</span></td>
+                  <td class="small muted">{{ mailbox.createdAt | timeAgo }} ago</td>
+                  <td><button class="btn btn-sm btn-danger" (click)="load('mailboxes')">Refresh</button></td>
+                </tr>
+              } @empty {
+                <tr><td colspan="6"><div class="empty">No mailboxes yet.</div></td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title">Create a mailbox</div></div>
+        <div class="card-body">
+          <div class="grid-4">
+            <div class="field">
+              <label for="mbDomain">Domain</label>
+              <select id="mbDomain" class="select" [(ngModel)]="selectedDomain">
+                <option value="">Select…</option>
+                @for (domain of domains(); track domain.id) {
+                  <option [value]="domain.id">{{ domain.name }}</option>
+                }
+              </select>
+            </div>
+            <div class="field">
+              <label for="mbLocal">Mailbox name</label>
+              <input id="mbLocal" class="input" [(ngModel)]="mailboxForm.localPart" placeholder="alice" />
+            </div>
+            <div class="field">
+              <label for="mbDisplay">Display name</label>
+              <input id="mbDisplay" class="input" [(ngModel)]="mailboxForm.displayName" placeholder="Alice" />
+            </div>
+            <div class="field">
+              <label for="mbPassword">Password</label>
+              <input id="mbPassword" class="input" [(ngModel)]="mailboxForm.password" placeholder="auto-generate" />
+            </div>
+          </div>
+          <div class="row" style="margin-top: 14px; gap: 10px">
+            <button class="btn btn-primary" (click)="createMailbox()" [disabled]="busy()">Create mailbox</button>
+            <span class="subtle small">Leave the password empty to generate a strong temporary one.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ------------------------------------------------ users -->
+  @if (tab() === 'users') {
+    <div class="stack">
+      <div class="card">
+        <div class="card-header"><div class="card-title">User accounts</div></div>
+        <div style="overflow: auto">
+          <table class="table">
+            <thead><tr><th>User</th><th>Roles</th><th>Mailboxes</th><th>2FA</th><th>Last login</th><th></th></tr></thead>
+            <tbody>
+              @for (user of users(); track user.id) {
+                <tr>
+                  <td>
+                    <div style="font-weight: 600">{{ user.displayName }}</div>
+                    <div class="subtle small">{{ user.email }}</div>
+                  </td>
+                  <td>
+                    <div class="row" style="gap: 4px; flex-wrap: wrap">
+                      @for (role of user.roles; track role) { <span class="badge badge-info">{{ role }}</span> }
+                    </div>
+                  </td>
+                  <td class="small">{{ user.mailboxes.join(', ') || '—' }}</td>
+                  <td><span class="badge" [class.badge-ok]="user.twoFactorEnabled">{{ user.twoFactorEnabled ? 'On' : 'Off' }}</span></td>
+                  <td class="small muted">{{ user.lastLoginAt ? (user.lastLoginAt | timeAgo) + ' ago' : 'never' }}</td>
+                  <td><button class="btn btn-sm" (click)="resetPassword(user)">Reset password</button></td>
+                </tr>
+              } @empty {
+                <tr><td colspan="6"><div class="empty">No users yet.</div></td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><div class="card-title">Invite a user</div></div>
+        <div class="card-body">
+          <div class="grid-3">
+            <div class="field">
+              <label for="userEmail">Email</label>
+              <input id="userEmail" class="input" [(ngModel)]="userForm.email" placeholder="alice@example.org" />
+            </div>
+            <div class="field">
+              <label for="userName">Display name</label>
+              <input id="userName" class="input" [(ngModel)]="userForm.displayName" placeholder="Alice" />
+            </div>
+            <div class="field">
+              <label for="userPassword">Password</label>
+              <input id="userPassword" class="input" [(ngModel)]="userForm.password" placeholder="auto-generate" />
+            </div>
+          </div>
+          <div class="row" style="margin-top: 14px">
+            <button class="btn btn-primary" (click)="createUser()" [disabled]="busy()">Create user</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ------------------------------------------------ queue -->
+  @if (tab() === 'queue') {
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Outbound queue</div>
+          <div class="muted small">Retries run automatically with exponential backoff</div>
+        </div>
+        <div class="row" style="gap: 8px">
+          <select class="select" style="width: 160px" [(ngModel)]="queueFilter" (ngModelChange)="load('queue')">
+            <option value="">All statuses</option>
+            <option value="Queued">Queued</option>
+            <option value="Deferred">Deferred</option>
+            <option value="Sent">Sent</option>
+            <option value="Failed">Failed</option>
+          </select>
+          <button class="btn btn-sm" (click)="processQueue()">Run delivery pass</button>
+        </div>
+      </div>
+      <div style="overflow: auto">
+        <table class="table">
+          <thead><tr><th>Subject</th><th>From → To</th><th>Status</th><th>Attempts</th><th>Created</th><th></th></tr></thead>
+          <tbody>
+            @for (item of queue(); track item.id) {
+              <tr>
+                <td>
+                  <div class="truncate" style="max-width: 260px; font-weight: 550">{{ item.subject || '(no subject)' }}</div>
+                  @if (item.lastError) {
+                    <div class="subtle small truncate" style="max-width: 320px" [title]="item.lastError">{{ item.lastError }}</div>
+                  }
+                </td>
+                <td class="small">
+                  <div class="truncate" style="max-width: 240px">{{ item.envelopeFrom }}</div>
+                  <div class="subtle truncate" style="max-width: 240px">→ {{ item.envelopeTo }}</div>
+                </td>
+                <td><span class="badge" [class]="statusClass(item.status)">{{ item.status }}</span></td>
+                <td>{{ item.attempts }}</td>
+                <td class="small muted">{{ item.createdAt | timeAgo }} ago</td>
+                <td>
+                  <div class="row" style="gap: 6px; justify-content: flex-end">
+                    @if (item.status !== 'Sent') {
+                      <button class="btn btn-sm" (click)="retryQueue(item)">Retry</button>
+                      <button class="btn btn-sm btn-danger" (click)="cancelQueue(item)">Cancel</button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            } @empty {
+              <tr><td colspan="6"><div class="empty">Queue is empty - everything has been delivered.</div></td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+
+  <!-- ------------------------------------------------ audit -->
+  @if (tab() === 'audit') {
+    <div class="card">
+      <div class="card-header"><div class="card-title">Audit log</div></div>
+      <div style="overflow: auto">
+        <table class="table">
+          <thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Target</th><th>IP</th></tr></thead>
+          <tbody>
+            @for (entry of audit(); track entry.id) {
+              <tr>
+                <td class="small muted">{{ entry.createdAt | timeAgo }} ago</td>
+                <td class="mono small">{{ entry.action }}</td>
+                <td class="small">{{ entry.actorAddress || '—' }}</td>
+                <td class="small muted">{{ entry.targetType }} {{ entry.targetId }}</td>
+                <td class="small muted">{{ entry.ipAddress || '—' }}</td>
+              </tr>
+            } @empty {
+              <tr><td colspan="5"><div class="empty">No audit entries recorded yet.</div></td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+</div>
